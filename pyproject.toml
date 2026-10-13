@@ -1,0 +1,19 @@
+[project]
+name = "edu-bot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastmcp>=4.0.11",
+    "ipython>=9.17.1",
+    "langchain[mcp]>=1.4.3",
+    "langchain-openai>=1.6.7",
+    "langgraph>=1.2.14",
+    "pint>=0.26.1",
+    "faker>=40.41.0",
+    "langfuse>=4.17.0",
+    "langgraph-checkpoint-sqlite>=3.1.1",
+    "streamlit>=1.65.0",
+streamlit run app.py    "fastapi>=0.143.0",
+]

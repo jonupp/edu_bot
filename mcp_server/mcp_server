@@ -1,0 +1,263 @@
+import ast
+import operator
+import os
+import random
+
+from dotenv import load_dotenv
+from fastmcp import FastMCP
+import pint
+import httpx
+from faker import Faker
+
+
+env = load_dotenv(".env")
+WIKIPEDIA_API_USER_AGENT = os.getenv("WIKIPEDIA_API_USER_AGENT", "EduBot/1.0 (educational assistant)")
+WIKIPEDIA_API_SEARCH_LIMIT = int(os.getenv("WIKIPEDIA_API_SEARCH_LIMIT", "10"))
+
+mcp = FastMCP("MCP Server")
+
+_ALLOWED_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
+
+def safe_evaluate(expression: str):
+    tree = ast.parse(expression, mode="eval")
+
+    def evaluate(node):
+        if isinstance(node, ast.Expression):
+            return evaluate(node.body)
+
+        if isinstance(node, ast.Constant):
+            if type(node.value) in (int, float):
+                return node.value
+            raise ValueError("Only numeric constants are allowed.")
+
+        if isinstance(node, ast.BinOp):
+            op = _ALLOWED_OPERATORS.get(type(node.op))
+            if op is None:
+                raise ValueError("Operator not allowed.")
+            return op(evaluate(node.left), evaluate(node.right))
+
+        if isinstance(node, ast.UnaryOp):
+            op = _ALLOWED_OPERATORS.get(type(node.op))
+            if op is None:
+                raise ValueError("Operator not allowed.")
+            return op(evaluate(node.operand))
+
+        raise ValueError("Invalid mathematical expression.")
+
+    return evaluate(tree)
+
+
+@mcp.tool(
+    name="solve_mathematics",
+    description="Evaluate a basic arithmetic expression written in Python syntax."
+)
+def do_mathematics(math_string: str) -> str:
+    return str(safe_evaluate(math_string))
+
+ureg = pint.UnitRegistry()
+Q_ = ureg.Quantity
+PINT_UNIT_NAMES = sorted(set(ureg))  # Get all names registered in this Pint registry.
+@mcp.tool(
+    name="convert_units",
+    description=(
+        "Convert a physical quantity between compatible units. "
+        "Use this tool for unit conversion requests. "
+        "Both from_unit and to_unit should use unit names or aliases "
+        "supported by Pint. Pint unit names and aliases include: "
+        + ", ".join(PINT_UNIT_NAMES)
+        + ". Compound units can also be expressed using combinations "
+        "of these units, such as 'meter / second' or 'kilogram * meter / second ** 2'. "
+        "Use the conversion result to answer the user."
+    ),
+)
+def convert_units(value: float, from_unit: str, to_unit: str) -> str:
+    try:
+        result = Q_(value, from_unit).to(to_unit)
+        return (
+            f"{value:g} {from_unit} = "
+            f"{float(result.magnitude):.10g} {result.units}"
+        )
+    except pint.errors.DimensionalityError:
+        return (
+            f"Cannot convert '{from_unit}' to '{to_unit}': "
+            "the units have incompatible dimensions."
+        )
+    except pint.errors.UndefinedUnitError as exc:
+        return f"Unknown unit: {exc}"
+
+@mcp.tool(
+    name="search_wikipedia",
+    description=(
+        "Search Wikipedia for relevant articles matching a keyword. The language parameter specifies the Wikipedia language to search. You can then use the Get Wikipedia Article tool to retrieve the content of a specific article using the article key (NOT the title)."
+        "Returns article keys, titles, descriptions."
+    ),
+)
+async def search_wikipedia(keyword: str, language: str) -> str:
+    """Find relevant Wikipedia articles for a keyword."""
+
+    if not keyword.strip():
+        return "Error: keyword must not be empty."
+
+    async with httpx.AsyncClient(
+        timeout=15.0,
+        headers={"User-Agent": WIKIPEDIA_API_USER_AGENT},
+    ) as client:
+        response = await client.get(
+            f"https://{language}.wikipedia.org/w/rest.php/v1/search/page",
+            params={"q": keyword, "limit": WIKIPEDIA_API_SEARCH_LIMIT},
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    pages = data.get("pages", [])
+
+    if not pages:
+        return f"No Wikipedia articles found for '{keyword}'."
+
+    results = []
+
+    for page in pages:
+        title = page.get("title", "Untitled")
+        key = page.get("key", "")
+        description = page.get("description") or "No description available"
+        
+        results.append(
+            f"Key: {key}\n"
+            f"Title: {title}\n"
+            f"Description: {description}\n"
+        )
+
+    return "\n\n".join(results)
+
+
+@mcp.tool(
+    name="get_wikipedia_article",
+    description=(
+        "Use this tool whenever you need factual information, background knowledge, "
+        "definitions, explanations, or additional context about a subject. "
+        "Use the search_wikipedia tool first to find the correct key."
+        "Make sure that the language parameter matches the language you used in the search_wikipedia tool. "
+    ),
+)
+async def get_wikipedia_article(key: str, language: str) -> str:
+    if not key.strip():
+        return "Error: article key must not be empty."
+
+    async with httpx.AsyncClient(
+        timeout=20.0,
+        headers={"User-Agent": WIKIPEDIA_API_USER_AGENT},
+    ) as client:
+        response = await client.get(
+            f"https://{language}.wikipedia.org/w/rest.php/v1/page/{key}",
+        )
+
+        if response.status_code == 404:
+            return f"No Wikipedia article found with key '{key}'."
+
+        response.raise_for_status()
+        data = response.json()
+
+    content = data.get("source", "")
+    article_title = data.get("title", key)
+    url = f"https://{language}.wikipedia.org/wiki/{key}"
+
+    if not content:
+        return f"No article text available for '{article_title}'. URL: {url}"
+
+    # Avoid sending an excessively large article to the LLM.
+    max_chars = 12000
+    if len(content) > max_chars:
+        content = content[:max_chars] + "\n\n[Article truncated]"
+
+    return (
+        f"Title: {article_title}\n"
+        f"URL: {url}\n\n"
+        f"Article content:\n{content}"
+    )
+
+# Generate reproducible fake data
+Faker.seed(42)
+random.seed(42)
+fake = Faker()
+
+STUDENTS = {
+    f"S{i:03d}": {
+        "name": fake.name(),
+        "email": fake.email(),
+    }
+    for i in range(1, 11)
+}
+
+COURSES = {
+    "CS101": "Introduction to Computer Science",
+    "MATH101": "Mathematics",
+    "PHY101": "Physics",
+    "ENG101": "English",
+}
+
+# Generate fake grades for each student and course
+GRADES = {
+    student_id: {
+        course_id: {
+            "assignments": [
+                random.randint(50, 100) for _ in range(3)
+            ],
+            "midterm": random.randint(50, 100),
+            "final": random.randint(50, 100),
+        }
+        for course_id in random.sample(
+            list(COURSES), k=random.randint(2, len(COURSES))
+        )
+    }
+    for student_id in STUDENTS
+}
+
+
+@mcp.tool(
+    name="get_grades",
+    description=(
+        "Retrieve grades for a student in a course. "
+        "Use a student ID such as S001 and a course ID such as CS101. "
+    ),
+)
+def get_grades(student_id: str, course_id: str) -> str:
+    student = STUDENTS.get(student_id)
+
+    if student is None:
+        return f"Student '{student_id}' not found."
+
+    course_grades = GRADES.get(student_id, {}).get(course_id)
+
+    if course_grades is None:
+        return (
+            f"No grades found for {student['name']} "
+            f"in {COURSES.get(course_id, course_id)}."
+        )
+
+    scores = (
+        course_grades["assignments"]
+        + [course_grades["midterm"], course_grades["final"]]
+    )
+    average = sum(scores) / len(scores)
+
+    return (
+        f"Student: {student['name']} ({student_id})\n"
+        f"Course: {COURSES[course_id]} ({course_id})\n"
+        f"Assignments: {course_grades['assignments']}\n"
+        f"Midterm: {course_grades['midterm']}\n"
+        f"Final: {course_grades['final']}\n"
+        f"Average: {average:.2f}%"
+    )
+
+if __name__ == "__main__":
+    mcp.run(transport="http", host="127.0.0.1", port=9999)
