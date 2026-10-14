@@ -1,4 +1,4 @@
-# Demo Project: Edu Bot
+# Proof of Concept Project: Edu Bot
 This repository contains a technical demonstration of an educational bot based on LLM technology with access to tools such as searching fetching Wikipedia articles, mathematics and unit conversion. 
 
 For the architecture of the Edu Bot please refer to the figure below. The components are described in the Components section.
