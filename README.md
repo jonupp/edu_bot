@@ -12,12 +12,12 @@ Subsequent images show that the Edu Bot succuessfully calls the tool which provi
 
 
 ## Running the Project locally
-Run vLLM: See ./llm_inference/cmd.shell
-Run MCP server: cd ./mcp_server & python .\mcp_server
-Run Agent API: cd agent_api & uvicorn api:app --host 127.0.0.1 --port 1111
+- Run vLLM: See ./llm_inference/cmd.shell
+- Run MCP server: cd ./mcp_server & python .\mcp_server
+- Run Agent API: cd agent_api & uvicorn api:app --host 127.0.0.1 --port 1111
 --> Make sure to set the LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, and LANGFUSE_BASE_URL environment variables before running above command.
-Run streamlit: streamlit run app.py
-Run observability: cd observability & docker-compose up -d docker-compose.yml    
+- Run streamlit: streamlit run app.py
+- Run observability: cd observability & docker-compose up -d docker-compose.yml    
 
 ## Components
 This section briefly describes the components of Edu Bot.

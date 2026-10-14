@@ -34,6 +34,7 @@ class CreateConversationResponse(BaseModel):
 
 class SendMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20000)
+    base64_image: str | None = Field(default=None, description="Base64-encoded jpeg, optional")
 
 
 class SendMessageResponse(BaseModel):
@@ -70,11 +71,12 @@ async def send_message(
     body: SendMessageRequest,
 ):
     service = app.state.agent_service
-
+    
     try:
         reply = await service.chat(
             conversation_id,
             body.message,
+            body.base64_image,
         )
         return {
             "conversation_id": conversation_id,
@@ -82,6 +84,7 @@ async def send_message(
         }
     except Exception as exc:
         # Log the exception server-side in production.
+        print(f"Agent request failed: {exc!r}")
         raise HTTPException(
             status_code=500,
             detail="Agent request failed",

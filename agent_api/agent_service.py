@@ -210,6 +210,27 @@ class AgentService:
             default=str,
         )
 
+    @staticmethod
+    def _to_text_and_image(content: Any) -> tuple[str, str | None]:
+        if not isinstance(content, list):
+            return AgentService._to_text(content), None
+
+        text_parts = []
+        image_content = None
+
+        for part in content:
+            if not isinstance(part, dict):
+                text_parts.append(AgentService._to_text(part))
+            elif part.get("type") == "text":
+                text_parts.append(str(part.get("text", "")))
+            elif (
+                part.get("type") == "image"
+                and isinstance(part.get("base64"), str)
+            ):
+                image_content = part["base64"]
+
+        return "".join(text_parts), image_content
+
     def _config(self, thread_id: str) -> dict:
         return {
             "configurable": {"thread_id": thread_id},
@@ -219,14 +240,18 @@ class AgentService:
             },
         }
 
-    async def chat(self, thread_id: str, message: str) -> str:
+    async def chat(self, thread_id: str, message: str, base64_image: str | None = None) -> str:
         if not self._started or self.agent is None:
             raise RuntimeError("Agent service is not started.")
+
+        content = [{"type": "text", "text": message}]
+        if base64_image is not None:
+            content.append({"type": "image", "base64": base64_image, "mime_type": "image/jpeg"})
 
         result = await self.agent.ainvoke(
             {
                 "messages": [
-                    HumanMessage(content=message)
+                    HumanMessage(content=content)
                 ]
             },
             config=self._config(thread_id),
@@ -244,7 +269,10 @@ class AgentService:
 
         return "The agent did not produce a final response."
 
-    async def load_messages(self, thread_id: str) -> list[dict[str, str]]:
+    async def load_messages(
+        self,
+        thread_id: str,
+    ) -> list[dict[str, str | None]]:
         if not self._started or self.agent is None:
             raise RuntimeError("Agent service is not started.")
 
@@ -256,20 +284,30 @@ class AgentService:
 
         for message in snapshot.values.get("messages", []):
             if isinstance(message, HumanMessage):
-                history.append({
-                    "role": "user",
-                    "content": self._to_text(message.content),
-                })
+                text_content, image_content = self._to_text_and_image(
+                    message.content
+                )
+                history.append(
+                    {
+                        "role": "user",
+                        "text_content": text_content,
+                        "image_content": image_content,
+                    }
+                )
 
             elif (
                 isinstance(message, AIMessage)
                 and not message.tool_calls
                 and message.content
             ):
-                history.append({
-                    "role": "assistant",
-                    "content": self._to_text(message.content),
-                })
+                text_content, _ = self._to_text_and_image(message.content)
+                history.append(
+                    {
+                        "role": "assistant",
+                        "text_content": text_content,
+                        "image_content": None,
+                    }
+                )
 
         return history
 
